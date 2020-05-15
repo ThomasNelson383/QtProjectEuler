@@ -6,8 +6,6 @@
 #include <QDebug>
 #include <QString>
 
-
-
 bool isPalindrome(int number)
 {
     QString s = QString::number(number);
