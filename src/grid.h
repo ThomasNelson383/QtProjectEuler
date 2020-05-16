@@ -20,11 +20,10 @@ public:
     int getValue() const;
 
     const QSet<int> &possableSolutions() const;
-    bool updatePossableSolutions(QSet<Section *> &updateSections, bool firstPass = false);
+    bool updatePossableSolutions(QSet<Section *> &updateSections);
 
     void addSection(Section *section);
-
-    int topLeftSum();
+    const QSet<Section *> &getSections() const;
 private:
     int m_value;
     QSet<Section *> m_sectionsIn;

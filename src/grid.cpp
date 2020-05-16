@@ -31,22 +31,19 @@ int Cell::getValue() const
     return m_value;
 }
 
+const QSet<Section *> &Cell::getSections() const
+{
+    return m_sectionsIn;
+}
+
 const QSet<int> &Cell::possableSolutions() const
 {
     return m_possableSolutions;
 }
 
-bool Cell::updatePossableSolutions(QSet<Section *> &updateSections, bool firstPass)
+bool Cell::updatePossableSolutions(QSet<Section *> &updateSections)
 {
-    if (m_possableSolutions.count() == 1)
-    {
-        if (firstPass)
-        {
-            updateSections.unite(m_sectionsIn);
-        }
-        return true;
-    }
-
+    if (getValue() != 0) return true;
 
     for (Section *section : m_sectionsIn)
     {
@@ -197,9 +194,9 @@ bool Grid::solve()
             if (s_solvedGrids[m_id]) return false;
 
             QSet<Section *> updateSections({});
-            if (!m_grid[row][column]->updatePossableSolutions(updateSections, true))
+            if (m_grid[row][column]->getValue() != 0)
             {
-                return false;
+                updateSections.unite(m_grid[row][column]->getSections());
             }
 
             while (!updateSections.isEmpty())
