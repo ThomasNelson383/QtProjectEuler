@@ -12,6 +12,7 @@
 #include <QList>
 #include <QFile>
 #include <QList>
+#include <QtConcurrent>
 #include <QElapsedTimer>
 
 #include "grid.h"
@@ -44,32 +45,25 @@ int main()
         puzzles.append(new Grid(i+1, suDokuData[i]));
     }
     stopwatch.start();
-    QList<int> topLeftNumbers;
+    QList<QFuture<int>> topLeftNumbers;
     for (Grid *puzzle : puzzles)
     {
-        stopwatch.restart();
-        puzzle->solve();
-        qDebug() << *puzzle;
-        qDebug() << "Time:" << stopwatch.elapsed() << "ms";
-        topLeftNumbers << puzzle->topLeftSum();
-        delete puzzle;
+        topLeftNumbers << QtConcurrent::run([puzzle]() {
+            puzzle->solve();
+            int topLeft = puzzle->topLeftSum();
+            delete puzzle;
+            return topLeft;
+        });
     }
     puzzles.clear();
 
     int sum = 0;
-    int numberFailed = 0;
-    for (int topLeft : topLeftNumbers)
+    for (QFuture<int> topLeft : topLeftNumbers)
     {
-        if (topLeft == 0)
-        {
-            ++numberFailed;
-        }
-        else
-        {
-            sum += topLeft;
-        }
+        topLeft.waitForFinished();
+        sum += topLeft.result();
     }
 
-    qDebug() << "sum: " << sum << "failed:" << numberFailed;
+    qDebug() << sum << stopwatch.elapsed();
     return 0;
 }

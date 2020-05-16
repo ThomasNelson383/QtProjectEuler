@@ -46,12 +46,15 @@ public:
     friend QDebug operator<<(QDebug debug, const Grid &grid);
 
 private:
+    int m_id;
     QString m_version;
 
     QVector<QVector<Cell*>> m_grid;
     QVector<Section>        m_rows;
     QVector<Section>        m_columns;
     QVector<Section>        m_blocks;
+
+    static QMap<int, bool> s_solvedGrids;
 
 
 

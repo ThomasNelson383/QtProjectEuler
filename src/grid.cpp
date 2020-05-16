@@ -1,7 +1,9 @@
 #include "grid.h"
 #include <QDebug>
+#include <QtConcurrent>
 
 const QSet<int> Cell::startingPossableSolutions = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+QMap<int, bool> Grid::s_solvedGrids;
 
 Cell::Cell(int value)
     : m_value(value)
@@ -105,12 +107,14 @@ void Cell::addSection(Section *section)
 
 
 Grid::Grid(int id, const QString &gridData)
-    : m_version(QString::number(id))
+    : m_id(id)
+    , m_version(QString::number(id))
     , m_grid(9)
     , m_rows(9)
     , m_columns(9)
     , m_blocks(9)
 {
+    s_solvedGrids.insert(id, false);
     for (int row = 0; row < 9; ++row)
     {
         for (int column = 0; column < 9; ++column)
@@ -123,7 +127,8 @@ Grid::Grid(int id, const QString &gridData)
 
 Grid::Grid(int subId, const Grid &oldGrid,
      int rowToSet, int columnToSet, int number)
-    : m_version(oldGrid.m_version + "." + QString::number(subId))
+    : m_id(oldGrid.m_id)
+    , m_version(oldGrid.m_version + "." + QString::number(subId))
     , m_grid(9)
     , m_rows(9)
     , m_columns(9)
@@ -147,6 +152,7 @@ Grid::Grid(int subId, const Grid &oldGrid,
 
 Grid::~Grid()
 {
+    return;
     for (int row = 0; row < 9; ++row)
     {
         for (int column = 0; column < 9; ++column)
@@ -193,6 +199,9 @@ bool Grid::solve()
         {
             for (int column = 0; column < 9; ++column)
             {
+                if (s_solvedGrids[m_id]) return false;
+
+
                 QSet<Section *> updateSections({});
                 int len = m_grid[row][column]->possableSolutions().count();
                 if (!m_grid[row][column]->updatePossableSolutions(updateSections, firstPass))
@@ -232,17 +241,31 @@ bool Grid::solve()
 
     // Guessing
     int subId = 0;
+    QList<QFuture<bool>> results;
     for (const auto &guess : listOfGuesses.toStdMap())
     {
-        for (const auto &nubmerToTry : *guess.second)
+        for (const auto &numberToTry : *guess.second)
         {
-            Grid g(subId++, *this, guess.first.first, guess.first.second, nubmerToTry);
-            bool solved = g.solve();
-            if (solved)
-            {
-                std::swap(g.m_grid, m_grid);
-                return true;
-            }
+            Grid *g = new Grid(subId++, *this, guess.first.first, guess.first.second, numberToTry);
+            results << QtConcurrent::run([this, g]() {
+
+                bool solved = g->solve();
+                if (solved)
+                {
+                    std::swap(g->m_grid, this->m_grid);
+                }
+                delete g;
+                return solved;
+            });
+        }
+    }
+
+    for (QFuture<bool> result: results)
+    {
+        result.waitForFinished();
+        if (result)
+        {
+            return true;
         }
     }
 
@@ -262,8 +285,6 @@ bool Grid::isSolved()
             {
                 if (!check.remove(cell->getValue()))
                 {
-                    qDebug() << "FAILED";
-                    qDebug() << *this;
                     return false;
                 }
             }
@@ -273,6 +294,8 @@ bool Grid::isSolved()
             }
         }
     }
+
+    s_solvedGrids[m_id] = true;
 
     return true;
 }
