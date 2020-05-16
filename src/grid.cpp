@@ -190,42 +190,32 @@ void Grid::createSections()
 
 bool Grid::solve()
 {
-    bool keepTrying = true;
-    bool firstPass = true;
-    do
+    for (int row = 0; row < 9; ++row)
     {
-        keepTrying = false;
-        for (int row = 0; row < 9; ++row)
+        for (int column = 0; column < 9; ++column)
         {
-            for (int column = 0; column < 9; ++column)
+            if (s_solvedGrids[m_id]) return false;
+
+            QSet<Section *> updateSections({});
+            if (!m_grid[row][column]->updatePossableSolutions(updateSections, true))
             {
-                if (s_solvedGrids[m_id]) return false;
+                return false;
+            }
 
-
-                QSet<Section *> updateSections({});
-                int len = m_grid[row][column]->possableSolutions().count();
-                if (!m_grid[row][column]->updatePossableSolutions(updateSections, firstPass))
+            while (!updateSections.isEmpty())
+            {
+                auto s = *updateSections.begin();
+                for (Cell *cell : *s)
                 {
-                    return false;
-                }
-
-                while (!updateSections.isEmpty())
-                {
-                    auto s = *updateSections.begin();
-                    for (Cell *cell : *s)
+                    if (!cell->updatePossableSolutions(updateSections))
                     {
-                        if (!cell->updatePossableSolutions(updateSections))
-                        {
-                            return false;
-                        }
+                        return false;
                     }
-                    updateSections.remove(s);
                 }
-                keepTrying = keepTrying || len != m_grid[row][column]->possableSolutions().count();
+                updateSections.remove(s);
             }
         }
-        firstPass = false;
-    } while (keepTrying);
+    }
 
     QMap<QPair<int, int>, const QSet<int> *> listOfGuesses;
     for (int row = 0; row < 9; ++row)
