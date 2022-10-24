@@ -2,45 +2,100 @@
 #define GRID_H
 
 #include <QObject>
-#include <QVector>
+#include <QMutex>
+#include <QList>
+#include <QMap>
 #include <QSet>
+#include <QSharedPointer>
+#include <QPair>
 
 class Cell;
-#define Section QList<Cell*>
+typedef QList<Cell*> Section;
 
 class Cell : public QObject
 {
     Q_OBJECT
 public:
-    Cell(int value);
+    enum class Strategies : int {
+        EASIST_STRAATEGY = 0,
+        HiddenSingle = 0,
+        PointingPair = 1,
+        NakedPair,
+        HiddenPair,
+        XWing,
 
-    static const QSet<int> startingPossableSolutions;
+        END_OF_STRATEGIES
+    };
+    Cell(const QString &id = "FF", int value = 0, QObject *p = Q_NULLPTR);
+    ~Cell() {}
+
+    // Cell(const Cell &other) {
+    //     this->m_value = other.m_value;
+    //     this->m_currentPossibleSolutions = other.m_currentPossibleSolutions;
+    // }
+    // Cell &operator=(const Cell &other)
+    // {
+    //     this->m_value = other.m_value;
+    //     this->m_currentPossibleSolutions = other.m_currentPossibleSolutions;\
+
+    //     return *this;
+    // }
+    void setID(const QString &id);
+    QString getID() const;
 
     void setValue(int value);
     int getValue() const;
+    int getOValue() const;
 
-    const QSet<int> &possableSolutions() const;
-    bool updatePossableSolutions(QSet<Section *> &updateSections);
+    const QSet<int> getPossibleSolutions() const;
+
+    bool isSolved() const;
 
     void addSection(Section *section);
-    const QSet<Section *> &getSections() const;
+    void addSectionBlock(Section *section);
+
+    bool updatePossibleSolutions(Strategies stragtegy);
+
+    Section getLockedPairs();
+
+    static const QSet<int> s_basePossibleSolutions;
+
+public slots:
+    bool removePossiableSolution(int solution);
+    bool removePossiableSolutions(QSet<int> solutions);
+
+signals:
+    void possibleSolutionsChanged(QSet<int> &possiablisties);
+    void slovedChanged(int solution);
+
 private:
-    int m_value;
-    QSet<Section *> m_sectionsIn;
-    QSet<int> m_possableSolutions;
+    QString m_id = "FF";
+    const int m_oValue = 0;
+    int m_value = 0;
+
+    QSet<int> m_currentPossibleSolutions;
+
+    bool hiddenSingle();
+    bool pointingPairs();
+    bool nakedPair();
+    bool hiddenPair();
+    bool xWing();
+
+    QList<Section*> m_sections;
+    Section* m_block;
 };
 
-class Grid
+class Grid : public QObject
 {
 public:
-    Grid(int id, const QString &gridData);
-    Grid(int subId, const Grid &oldGrid,
-         int rowToSet, int columnToSet, int number);
+    Grid(int id, const QString &gridData, QObject *p = Q_NULLPTR);
+    // Grid(const Grid &oldGrid,
+    //      int rowToSet, int columnToSet, int number);
     ~Grid();
 
     bool solve();
     bool isSolved();
-    int topLeftSum();
+    int topLeftSum() const;
 
     friend QDebug operator<<(QDebug debug, const Grid &grid);
 
@@ -48,16 +103,13 @@ private:
     int m_id;
     QString m_version;
 
-    QVector<QVector<Cell*>> m_grid;
-    QVector<Section>        m_rows;
-    QVector<Section>        m_columns;
-    QVector<Section>        m_blocks;
+    Cell* m_grid[9][9];
 
-    static QMap<int, bool> s_solvedGrids;
+    Section m_rows[9];
+    Section m_columns[9];
+    Section m_blocks[9];
 
-
-
-    void createSections();
+    void setCellsSections();
 };
 
 #endif // GRID_H

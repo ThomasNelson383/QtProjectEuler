@@ -17,12 +17,11 @@
 
 #include "grid.h"
 
-static const QString filePath = "../../../res/p096_sudoku.txt";
-static const int startNumber = 0;
-static const int numSuDokuPuzzles = 50;
+static const QString filePath = ":/sudoku/p096_sudoku.txt";
+static const int startNumber = 1;
+static const int numSuDokuPuzzlesToSolve = 6;
 
 static QElapsedTimer stopwatch;
-
 
 int main()
 {
@@ -33,36 +32,35 @@ int main()
     }
 
     QString fileData = f.readAll();
-    fileData.remove('\n');
-    QList<QString> suDokuData = fileData.split(QRegExp("Grid [0-9][0-9]"));
+    fileData.remove("\r\n");
+    QList<QString> suDokuData = fileData.split(QRegularExpression("Grid [0-9][0-9]"));
     suDokuData.removeAt(0); // Blank grid
 
-    Q_ASSERT(suDokuData.length() == numSuDokuPuzzles); // Should have gotten all 50, but testing we only care about numSuDokuPuzzles
-
-    QList<Grid *> puzzles;
-    for (int i = startNumber; i < numSuDokuPuzzles; ++i)
-    {
-        puzzles.append(new Grid(i+1, suDokuData[i]));
-    }
-    stopwatch.start();
-    QList<QFuture<int>> topLeftNumbers;
-    for (Grid *puzzle : puzzles)
-    {
-        topLeftNumbers << QtConcurrent::run([puzzle]() {
-            puzzle->solve();
-            int topLeft = puzzle->topLeftSum();
-            delete puzzle;
-            return topLeft;
-        });
-    }
-    puzzles.clear();
+    //Q_ASSERT(suDokuData.length() == numSuDokuPuzzles); // Should have gotten all 50, but testing we only care about numSuDokuPuzzles
 
     int sum = 0;
-    for (QFuture<int> topLeft : topLeftNumbers)
+    for (int i = startNumber; i < startNumber + numSuDokuPuzzlesToSolve; ++i)
     {
-        topLeft.waitForFinished();
-        sum += topLeft.result();
+        Grid puzzle(i+1, suDokuData[i]);
+        puzzle.solve();
+
+        sum += puzzle.topLeftSum();
+
+        qDebug () << puzzle;
+
+        Q_ASSERT(puzzle.isSolved());
     }
+    stopwatch.start();
+
+//
+//    for (auto puzzle : puzzles)
+//    {
+//        puzzle->solve();
+
+//        sum += puzzle->topLeftSum();
+
+//        qDebug () << &puzzle;
+//    }
 
     qDebug() << sum << stopwatch.elapsed();
     return 0;

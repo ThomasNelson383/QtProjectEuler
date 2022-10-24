@@ -2,28 +2,44 @@
 #include <QDebug>
 #include <QtConcurrent>
 
-const QSet<int> Cell::startingPossableSolutions = {1, 2, 3, 4, 5, 6, 7, 8, 9};
-QMap<int, bool> Grid::s_solvedGrids;
+const QSet<int> Cell::s_basePossibleSolutions = { 1, 2, 3, 4, 5, 6, 7, 8, 9};
 
-Cell::Cell(int value)
-    : m_value(value)
-    , m_sectionsIn()
-    , m_possableSolutions(startingPossableSolutions)
+Cell::Cell(const QString &id, int value, QObject *p)
+    : QObject(p)
+    , m_id(id)
+    , m_oValue(value)
+    , m_value(value)
+    , m_currentPossibleSolutions(s_basePossibleSolutions)
 {
     Q_ASSERT(value >= 0 && value <= 9);
-    if (m_value != 0)
+
+    if (m_value > 0)
     {
-        m_possableSolutions = { m_value };
+        m_currentPossibleSolutions = { m_value };
     }
+}
+
+void Cell::setID(const QString &id)
+{
+    m_id = id;
+}
+
+QString Cell::getID() const
+{
+    return m_id;
 }
 
 void Cell::setValue(int value)
 {
     Q_ASSERT(value >= 0 && value <= 9);
-    Q_ASSERT(m_value == 0);
 
-    m_value = value;
-    m_possableSolutions = { m_value };
+    if (m_value != value && m_value == 0)
+    {
+        m_value = value;
+        m_currentPossibleSolutions = { m_value };
+
+        emit slovedChanged(m_value);
+    }
 }
 
 int Cell::getValue() const
@@ -31,142 +47,387 @@ int Cell::getValue() const
     return m_value;
 }
 
-const QSet<Section *> &Cell::getSections() const
+int Cell::getOValue() const
 {
-    return m_sectionsIn;
+    return m_oValue;
 }
 
-const QSet<int> &Cell::possableSolutions() const
+bool Cell::removePossiableSolutions(QSet<int> solutions)
 {
-    return m_possableSolutions;
-}
+    bool removed = false;
 
-bool Cell::updatePossableSolutions(QSet<Section *> &updateSections)
-{
-    if (getValue() != 0) return true;
-
-    for (Section *section : m_sectionsIn)
+    for (auto const &solution : solutions)
     {
-        QSet<int> solutionsLeftToFind({});
-        QSet<int> doubleCheckSoultion = startingPossableSolutions;
-        for (Cell *cell : *section)
-        {
-            if (cell == this)
-            {
-                continue; // skipping the skill we trying to update
-            }
-            if (cell->getValue() == 0)
-            {
-                solutionsLeftToFind |= cell->possableSolutions();
-            }
-            else
-            {
-                m_possableSolutions.remove(cell->getValue());
-                if (!doubleCheckSoultion.remove(cell->getValue()))
-                {
-                    return false;
-                }
-            }
+        removed |= removePossiableSolution(solution);
+    }
 
-            if (m_possableSolutions.count() == 1)
+    return removed;
+}
+
+bool Cell::removePossiableSolution(int solution)
+{
+    bool removed = false;
+    if (!isSolved())
+    {
+        removed = m_currentPossibleSolutions.remove(solution);
+        if (m_currentPossibleSolutions.size() == 1)
+        {
+            qDebug() << "Naked Single:" << getID() << "by removing" << solution <<  m_currentPossibleSolutions.values().first();
+            setValue(m_currentPossibleSolutions.values().first());
+        }
+    }
+    return removed;
+}
+
+const QSet<int> Cell::getPossibleSolutions() const
+{
+    return m_currentPossibleSolutions;
+}
+
+bool Cell::hiddenSingle()
+{
+    bool foundHiddenSignle = false;
+    for (const auto &section : m_sections)
+    {
+        auto justOne = getPossibleSolutions();
+        for (const auto &cell : *section)
+        {
+            if (cell->getID() != getID())
             {
-                setValue(*m_possableSolutions.begin());
-                updateSections.unite(m_sectionsIn);
-                return true;
-            }
-            else if (m_possableSolutions.count() == 0)
-            {
-                return false;
+                justOne.subtract(cell->getPossibleSolutions());
             }
         }
 
-        // Haven't solved, check last possblites
-        for (auto solution : m_possableSolutions)
+        if (justOne.size() == 1)
         {
-            if (!solutionsLeftToFind.contains(solution))
+            qDebug() << "Hidden Single:" << getID() << justOne.values().first();
+            setValue(justOne.values()[0]);
+            foundHiddenSignle = true;
+            break;
+        }
+    }
+
+    return foundHiddenSignle;
+}
+
+bool Cell::pointingPairs()
+{
+    bool foundHiddenPair = false;
+
+    if (getPossibleSolutions().size() >= 2)
+    {
+        auto const possibilities = getPossibleSolutions();
+        for (const auto &section : m_sections)
+        {
+            QMap<int, Section> possablitiesInOtherCells;
+            for (const auto &possibility : possibilities)
             {
-                setValue(solution);
-                updateSections.unite(m_sectionsIn);
-                return true;
+                possablitiesInOtherCells.insert(possibility, {});
+            }
+
+            for (const auto &cell : *section)
+            {
+                if (cell->getID() != getID() && // Cannot be this cell
+                   !cell->isSolved())         // No new infmation from an already solved cell
+                {
+                    for (const auto& cellP : cell->getPossibleSolutions())
+                    {
+                        if (possablitiesInOtherCells.contains(cellP))
+                        {
+                            possablitiesInOtherCells[cellP].append(cell);
+                        }
+                    }
+                }
+            }
+
+            // Once gathered all the cells that share the same possiblity as this one
+            // Is there a cell:
+            // 1. there is one other cell the share a possiblity
+            // 2. that share another section to this one
+            for (auto &valueCell : possablitiesInOtherCells.toStdMap())
+            {
+                if (valueCell.second.size() == 1)
+                {
+                    auto pair = valueCell.second.first();
+                    for (auto &anotherSection : m_sections)
+                    {
+                        if (anotherSection != section && pair->m_sections.contains(anotherSection))
+                        {
+                            QList<QString> cellsUpdated;
+                            // Found a pair in two sections and need to clean up the other section
+                            for (const auto &cell : *anotherSection)
+                            {
+                                if (cell->getID() != getID() && cell->getID() != pair->getID())
+                                {
+                                    if (cell->removePossiableSolution(valueCell.first))
+                                    {
+                                        cellsUpdated << cell->getID();
+                                        foundHiddenPair = true;
+                                    }
+                                }
+                            }
+                            if (foundHiddenPair)
+                            {
+                                qDebug() << "Pointing Pairs:" << getID() << "and" << pair->getID() << valueCell.first << cellsUpdated;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (foundHiddenPair)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            if (foundHiddenPair)
+            {
+                break;
             }
         }
     }
 
-    return true;
+    return foundHiddenPair;
+}
+
+bool Cell::nakedPair()
+{
+    bool foundNakedPair = false;
+    if (getPossibleSolutions().size() == 2)
+    {
+        auto const possibilities = getPossibleSolutions();
+        for (const auto &section : m_sections)
+        {
+            Section matchingPair;
+            for (const auto &cell : *section)
+            {
+                if (cell->getID() != getID() && cell->getPossibleSolutions() == possibilities)
+                {
+                    matchingPair << cell;
+                }
+            }
+
+            Q_ASSERT(matchingPair.size() < 2);
+            if (matchingPair.size() == 1)
+            {
+                QList<QString> idsChanged;
+                for (const auto &cell : *section)
+                {
+                    if (cell->getID() != getID() &&
+                        cell->getID() != matchingPair.first()->getID())
+                    {
+                        if (cell->removePossiableSolutions(possibilities))
+                        {
+                            idsChanged << cell->getID();
+                            foundNakedPair = true;
+                        }
+                    }
+                }
+
+                if (foundNakedPair)
+                {
+                    qDebug() << "Naked Pairs:" << getID() << "and" << matchingPair.first()->getID() << possibilities << idsChanged;
+                }
+            }
+        }
+    }
+    return foundNakedPair;
+}
+
+bool Cell::hiddenPair()
+{
+    bool foundHiddenPair = false;
+    if (getPossibleSolutions().size() >= 2)
+    {
+        auto const possibilities = getPossibleSolutions();
+        for (const auto &section : m_sections)
+        {
+            const auto refSection = *section;
+            for (int i = 0; i < refSection.size(); ++i)
+            {
+                const auto compareCell = refSection[i];
+                auto comarePairPossiblities = compareCell->getPossibleSolutions();
+                comarePairPossiblities.intersect(possibilities);
+                if (compareCell->getID() != getID() && comarePairPossiblities.size() == 2)
+                {
+                    Section listOfCellsWithPair;
+                    for (int j = 0; j < refSection.size(); ++j)
+                    {
+                        const auto checkCell = refSection[j];
+                        if (checkCell->getID() != getID() && checkCell->getID() != compareCell->getID() &&
+                            checkCell->getPossibleSolutions().intersects(comarePairPossiblities))
+                        {
+                            listOfCellsWithPair << checkCell;
+                        }
+                    }
+
+                    // No other cells has the pair, now remove the other possiblities from these two cells
+                    if (listOfCellsWithPair.size() == 0)
+                    {
+                        auto const removeMy = possibilities - comarePairPossiblities;
+                        removePossiableSolutions(removeMy);
+                        auto const removeTheirs = compareCell->getPossibleSolutions() - comarePairPossiblities;
+                        compareCell->removePossiableSolutions(removeTheirs);
+
+                        if (removeMy.size() > 0 || removeTheirs.size() > 0)
+                        {
+                            qDebug() << "Found hidden pair:" << getID() << "and" << compareCell->getID() << comarePairPossiblities << removeMy << removeTheirs;
+                            foundHiddenPair = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return foundHiddenPair;
+}
+
+Section Cell::getLockedPairs()
+{
+    return Section();
+}
+
+bool Cell::xWing()
+{
+    bool foundXWing = false;
+
+    auto lockedPairs = getLockedPairs();
+    for (auto pair : lockedPairs)
+    {
+
+    }
+
+    return foundXWing;
+}
+
+bool Cell::updatePossibleSolutions(Strategies stragtegy)
+{
+    if (!isSolved())
+    {
+        switch (stragtegy)
+        {
+        case Strategies::HiddenSingle:
+            return hiddenSingle();
+        case Strategies::PointingPair:
+            return pointingPairs();
+        case Strategies::NakedPair:
+            return nakedPair();
+        case Strategies::HiddenPair:
+            return hiddenPair();
+        case Strategies::XWing:
+            return xWing();
+        case Strategies::END_OF_STRATEGIES:
+        default:
+            Q_ASSERT(false);
+        }
+    }
+
+    return false;
+
+}
+
+bool Cell::isSolved() const
+{
+    return m_value > 0;
 }
 
 void Cell::addSection(Section *section)
 {
-    m_sectionsIn.insert(section);
+    m_sections << section;
 
-    Q_ASSERT(m_sectionsIn.size() <= 3);
+    for (auto &cell : *section)
+    {
+        if (cell->getID() != getID())
+        {
+            connect(cell, &Cell::slovedChanged, this, &Cell::removePossiableSolution);
+
+            if (cell->isSolved())
+            {
+                removePossiableSolution(cell->getValue());
+            }
+        }
+    }
 }
 
+void Cell::addSectionBlock(Section *section)
+{
+    addSection(section);
+    m_block = section;
+}
 
-Grid::Grid(int id, const QString &gridData)
-    : m_id(id)
+Grid::Grid(int id, const QString &gridData, QObject *p)
+    : QObject(p)
+    , m_id(id)
     , m_version(QString::number(id))
-    , m_grid(9)
-    , m_rows(9)
-    , m_columns(9)
-    , m_blocks(9)
-{
-    s_solvedGrids.insert(id, false);
-    for (int row = 0; row < 9; ++row)
-    {
-        for (int column = 0; column < 9; ++column)
-        {
-            m_grid[row].append(new Cell(QString(gridData[row * 9 + column]).toInt()));
-        }
-    }
-    createSections();
-}
-
-Grid::Grid(int subId, const Grid &oldGrid,
-     int rowToSet, int columnToSet, int number)
-    : m_id(oldGrid.m_id)
-    , m_version(oldGrid.m_version + "." + QString::number(subId))
-    , m_grid(9)
-    , m_rows(9)
-    , m_columns(9)
-    , m_blocks(9)
 {
     for (int row = 0; row < 9; ++row)
     {
-        m_grid[row].resize(9);
+        QString idRow = QString("abcdefghijklmnopqrstuvwxyz").at(row);
+        idRow = idRow.toUpper();
         for (int column = 0; column < 9; ++column)
         {
-            m_grid[row][column] = new Cell(oldGrid.m_grid[row][column]->getValue());
+            int cellNumber = row * 9 + column;
+            int value = QString(gridData[cellNumber]).toInt();
+            QString id = idRow + QString::number(column + 1);
+
+            m_grid[row][column] = new Cell(id, value, this);
         }
     }
 
-    Q_ASSERT(m_grid[rowToSet][columnToSet]->getValue() == 0);
 
-    createSections();
-
-    m_grid[rowToSet][columnToSet]->setValue(number);
+    setCellsSections();
 }
+
+// Grid::Grid(const Grid &oldGrid,
+//      int rowToSet, int columnToSet, int number)
+//     : m_id(oldGrid.m_id)
+//     , m_version(oldGrid.m_version + ".{" + QString::number(rowToSet) + "," + QString::number(columnToSet) + "," + QString::number(number) + "}")
+// {
+//     m_grid.clear();
+//     for (int row = 0; row < 9; ++row)
+//     {
+//         m_grid.append(QList<QSharedPointer<Cell>>({}));
+//         for (int column = 0; column < 9; ++column)
+//         {
+//             if (row == rowToSet && columnToSet == column)
+//             {
+//                 cell = QSharedPointer<Cell>::create(number);
+//             }
+//             else
+//             {
+//                 auto oldCell = oldGrid.m_grid[row][column];
+//                 assert(oldCell);
+//
+//                 cell = QSharedPointer<RealCell>::create(oldCell->getValue());
+//             }
+//
+//             m_grid[row].append(cell);
+//         }
+//     }
+//     createSections();
+// }
 
 Grid::~Grid()
 {
-    return;
+    // qDebug() << "Failed on" << m_id << Qt::endl << *this;
+}
+
+void Grid::setCellsSections()
+{
     for (int row = 0; row < 9; ++row)
     {
         for (int column = 0; column < 9; ++column)
         {
-            delete m_grid[row][column];
-            m_grid[row][column] = NULL;
-        }
-    }
-}
+            const int blockIndex = (row / 3) * 3 + column / 3;
 
-void Grid::createSections()
-{
-    for (int i = 0; i < 9; ++i)
-    {
-        m_rows[i] = Section();
-        m_columns[i] = Section();
-        m_blocks[i] = Section();
+            auto cell = m_grid[row][column];
+
+            m_rows[row].append(cell);
+            m_columns[column].append(cell);
+            m_blocks[blockIndex].append(cell);
+        }
+
     }
 
     for (int row = 0; row < 9; ++row)
@@ -174,120 +435,102 @@ void Grid::createSections()
         for (int column = 0; column < 9; ++column)
         {
             const int blockIndex = (row / 3) * 3 + column / 3;
-            m_blocks[blockIndex].append(m_grid[row][column]);
-            m_rows[row].append(m_grid[row][column]);
-            m_columns[column].append(m_grid[row][column]);
 
             m_grid[row][column]->addSection(&m_rows[row]);
             m_grid[row][column]->addSection(&m_columns[column]);
-            m_grid[row][column]->addSection(&m_blocks[blockIndex]);
+            m_grid[row][column]->addSectionBlock(&m_blocks[blockIndex]);
         }
     }
 }
 
+bool Grid::isSolved()
+{
+    bool isSolved = true;
+    for (const auto &row : m_grid)
+    {
+        for (const auto &cell : row)
+        {
+            isSolved &= cell->isSolved();
+            if (!isSolved)
+            {
+                break;
+            }
+        }
+    }
+
+    if (isSolved)
+    {
+        // These also better not have doubles
+        for (int i = 0; i < 9; ++i)
+        {
+            QSet<int> row = Cell::s_basePossibleSolutions;
+            QSet<int> column = Cell::s_basePossibleSolutions;
+            QSet<int> block = Cell::s_basePossibleSolutions;
+
+            for (int j = 0; j < 9; ++j)
+            {
+                isSolved &= row.remove(m_rows[i][j]->getValue());
+                isSolved &= column.remove(m_columns[i][j]->getValue());
+                isSolved &= block.remove(m_blocks[i][j]->getValue());
+
+                if (!isSolved)
+                {
+                    qDebug() << *this;
+                    Q_ASSERT(false);
+                    break;
+                }
+            }
+            if (!isSolved)
+            {
+                break;
+            }
+        }
+    }
+
+    return isSolved;
+}
+
 bool Grid::solve()
 {
-    for (int row = 0; row < 9; ++row)
+    bool somethingChanged = true;
+    Cell::Strategies strategy = Cell::Strategies::EASIST_STRAATEGY;
+    while (!isSolved() && somethingChanged)
     {
-        for (int column = 0; column < 9; ++column)
+        somethingChanged = false;
+        for (auto &row : m_grid)
         {
-            if (s_solvedGrids[m_id]) return false;
-
-            QSet<Section *> updateSections({});
-            if (m_grid[row][column]->getValue() != 0)
+            for (auto &cell : row)
             {
-                updateSections.unite(m_grid[row][column]->getSections());
-            }
+                somethingChanged |= cell->updatePossibleSolutions(strategy);
 
-            while (!updateSections.isEmpty())
-            {
-                auto s = *updateSections.begin();
-                for (Cell *cell : *s)
+                if (somethingChanged && strategy > Cell::Strategies::EASIST_STRAATEGY)
                 {
-                    if (!cell->updatePossableSolutions(updateSections))
-                    {
-                        return false;
-                    }
+                    break;
                 }
-                updateSections.remove(s);
             }
-        }
-    }
 
-    QMap<QPair<int, int>, const QSet<int> *> listOfGuesses;
-    for (int row = 0; row < 9; ++row)
-    {
-        for (int column = 0; column < 9; ++column)
-        {
-            if (m_grid[row][column]->possableSolutions().count() > 1)
+            if (somethingChanged && strategy > Cell::Strategies::EASIST_STRAATEGY)
             {
-                listOfGuesses.insert({row, column}, &m_grid[row][column]->possableSolutions());
+                strategy = Cell::Strategies::EASIST_STRAATEGY;
+                break;
             }
         }
-    }
 
-    // Guessing
-    int subId = 0;
-    QList<QFuture<bool>> results;
-    for (const auto &guess : listOfGuesses.toStdMap())
-    {
-        for (const auto &numberToTry : *guess.second)
+        if (strategy < Cell::Strategies::END_OF_STRATEGIES && !somethingChanged)
         {
-            Grid *g = new Grid(subId++, *this, guess.first.first, guess.first.second, numberToTry);
-            results << QtConcurrent::run([this, g]() {
-
-                bool solved = g->solve();
-                if (solved)
-                {
-                    std::swap(g->m_grid, this->m_grid);
-                }
-                delete g;
-                return solved;
-            });
+            strategy = (Cell::Strategies)((int)strategy + 1);
         }
-    }
 
-    for (QFuture<bool> result: results)
-    {
-        result.waitForFinished();
-        if (result)
+        if (strategy < Cell::Strategies::END_OF_STRATEGIES)
         {
-            return true;
+            somethingChanged = true;
         }
     }
 
     return isSolved();
 }
 
-bool Grid::isSolved()
-{
-    QVector<QVector<Section> *> allSections;
-    allSections << &m_rows; allSections << &m_columns; allSections << &m_blocks;
-    for (const auto &section : allSections)
-    {
-        for (const auto &cells : *section)
-        {
-            QSet<int> check = Cell::startingPossableSolutions;
-            for (const auto &cell : cells)
-            {
-                if (!check.remove(cell->getValue()))
-                {
-                    return false;
-                }
-            }
-            if (!check.empty())
-            {
-                return false;
-            }
-        }
-    }
-
-    s_solvedGrids[m_id] = true;
-
-    return true;
-}
-
-int Grid::topLeftSum()
+int Grid::topLeftSum() const
 {
     // Q_ASSERT(solved());
     if (!m_grid[0][0]->getValue() ||
@@ -304,20 +547,38 @@ int Grid::topLeftSum()
 QDebug operator<<(QDebug debug, const Grid &grid)
 {
 
-    qDebug() << grid.m_version << endl;
+    debug << grid.m_version << Qt::endl;
+    debug << "-------BEFORE--------" << Qt::endl;
     for (int row = 0; row < 9; ++row)
     {
         for (int column = 0; column < 9; column += 3)
         {
-            debug << grid.m_grid[row][column]->getValue()
-                  << grid.m_grid[row][column + 1]->getValue()
-                  << grid.m_grid[row][column + 2]->getValue()
-                  << "|";
+            debug  << grid.m_grid[row][column + 0]->getOValue()
+                   << grid.m_grid[row][column + 1]->getOValue()
+                   << grid.m_grid[row][column + 2]->getOValue()
+                   << "|";
         }
-        debug << endl;
+        debug << Qt::endl;
         if (row == 2 || row == 5)
         {
-            debug << "-----------------------" << endl;
+            debug << "-----------------------" << Qt::endl;
+        }
+    }
+
+    debug << "-------AFTER--------" << Qt::endl;
+    for (int row = 0; row < 9; ++row)
+    {
+        for (int column = 0; column < 9; column += 3)
+        {
+            debug  << grid.m_grid[row][column + 0]->getValue()
+                   << grid.m_grid[row][column + 1]->getValue()
+                   << grid.m_grid[row][column + 2]->getValue()
+                   << "|";
+        }
+        debug << Qt::endl;
+        if (row == 2 || row == 5)
+        {
+            debug << "-----------------------" << Qt::endl;
         }
     }
 
